@@ -1,0 +1,1 @@
+g++      CMakeFiles/test.dir/test.cpp.o  -o ../../bin/test  -L/home/user/cplus/lib -Wl,-rpath,/home/user/cplus/lib -rdynamic -lpthread 
