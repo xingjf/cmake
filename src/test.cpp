@@ -2,22 +2,24 @@
 #include <fstream>
 #include <streambuf>
 #include <iostream>
+#include <sstream>
+#include <iterator>
 #include <vector>
-#include <chrono>
 #include <string.h>
 #include <unistd.h>
-#include <Semaphore.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+std::mutex mtx;
+std::condition_variable cv;
 static const int THREADS_NUM = 4;
 static int ItemAvail = 0; 
 static int ItemNum;
-static Semaphore xx;
-static Semaphore BufferLock("BufferLock",1); 
-auto buffer,logger;
-std::vector<std::string> split_string(const std::string& str,
-                                      const std::string& delimiter)
+std::ofstream file;
+std::vector<std::string> buffer;
+std::vector<std::string> split_string(const std::string& str, const std::string& delimiter)
 {
-    std::vector<std::string> strings;
- 
+    std::vector<std::string> strings; 
     std::string::size_type pos = 0;
     std::string::size_type prev = 0;
     while ((pos = str.find(delimiter, prev)) != std::string::npos)
@@ -41,7 +43,8 @@ std::vector<char> split_item(const std::string& str)
 	}
 	return res;
 }
-void bubblesort(std::vector<char>& a){
+void bubblesort(std::vector<char>& a)
+{
     int len=a.size();
     int j2; 
     for(int i=0;i<len;i++) {
@@ -52,7 +55,8 @@ void bubblesort(std::vector<char>& a){
    		}
     }
 }
-void hashsort(std::vector<char>& a){
+void hashsort(std::vector<char>& a)
+{
 	int charCount[10]={0};
 	for(int i=0;i<a.size();i++)
 		charCount[a[i]-'0']++;
@@ -61,69 +65,67 @@ void hashsort(std::vector<char>& a){
 		for(int j=0;j<charCount[i];j++)
 			a.push_back('0'+i);
 }
-void spawnThread(int tid,int sort)
+void consumer(int tid,char sort)
 {
 	std::vector<char> v;
+	std::unique_lock<std::mutex> lck(mtx);
 	while (true){
-		NotEmpty.Wait(); //wait util the buffer has data
-		BufferLock.Wait(); //lock the buffer
-		if(Out<ItemNum){
+		cv.wait(lck); 
+		if(ItemAvail<ItemNum){
 			v=split_item(buffer.at(ItemAvail));
 			ItemAvail++;
-			BufferLock.Signal();
-			if(sort==0)
+			cv.notify_all();
+			if(sort=='0')
 				bubblesort(v);
 			else
 				hashsort(v);
-				ostringstream s;
-			for(const auto&i:v){
-				if(&i !=&v[0]){
-				s<<','
-			}
-			s<<i;	
-			logger->write("Tread "+std::to_string(tid)+":"+s.str());	
+			std::ostringstream vts;
+			if (!v.empty()) 
+  			{ 
+	   			std::copy(v.begin(),v.end()-1, std::ostream_iterator<int>(vts, ", ")); 
+				vts << v.back(); 
+  			} 
+			file<<"thread "<<tid<<":"<<vts.str()<<std::endl;	
 		}
 		else{
-			std::cout<<"Tread "+std::to_string(tid)<<" No available work"<<endl;
-			BufferLock.Signal();
+			cv.notify_all();
+			std::cout<<"Tread "+std::to_string(tid)<<" No available work"<<std::endl;
 			break;
 		}
 	}
 }
-int main()
+int main(int argc,char *argv[])
 {
-	string InputName,OutputName;
-	int sorttype;
+	std::string InputName,OutputName;
+	char sorttype;
 	if(argc<2){
 		InputName="input.txt";
 		OutputName="output.txt";
-		sorttype=0;
+		sorttype='0';
 	}	
 	else{
 		InputName=argv[1];
 		OutputName=argv[2];
-		sorttype=argv[3];
+		sorttype=argv[3][0];
 	}
 	std::ifstream t(InputName);
 	std::string str;
 	std::vector<char> v;	
 	t.seekg(0, std::ios::end);   
 	str.reserve(t.tellg());
-	t.seekg(0, std::ios::beg);
-	
-	str.assign((std::istreambuf_iterator<char>(t)),
-	            std::istreambuf_iterator<char>());
+	t.seekg(0, std::ios::beg);	
+	str.assign((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
 	buffer = split_string(str, "\n");
-	
-	std::thread threadPool[THREADS_NUM];
-    	logger = std::make_shared<Logger>(OutputName);
+	std::thread consumers[THREADS_NUM];
+	file.open(OutputName);
  	ItemAvail=0;
  	ItemNum=buffer.size();
-    	for(int i=0;i<THREADS_NUM;++i)
-    	{
-    		threadPool[i]=std::thread(spawnThread,i,sorttype);
-    		threadPool[i].join();
-	}  
-        system("pause");
-        return 0;
+    for(int i=0;i<THREADS_NUM;++i)
+    {
+    	consumers[i]=std::thread(consumer,i,sorttype);
+    	consumers[i].join();
+	}    
+    file.close();
+    system("pause");
+    return 0;
 }
